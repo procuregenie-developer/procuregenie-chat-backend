@@ -1,10 +1,13 @@
 {
-  "name": "chatbortbackend",
+  "name": "@procuregenie/chat-backend",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "test": "jest"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [],
   "author": "",
