@@ -26,7 +26,7 @@ const getGroups = async (req, res) => {
             search,
             page,
             limit,
-            userId: req?.user?.id,
+            userId: req?.user_data?.user_id,
         });
 
         if (response.status === "success") {
@@ -50,7 +50,7 @@ const getAllUsers = async (req, res) => {
     try {
         let { currentPage = 1, totalRecords = 10, search = "", moduleValue = 0 } = req.query;
         let config = configurationProvider.getConfig?.();
-        let response = await config.getAllUsers?.({ currentPage, totalRecords, search, moduleValue, userId: req?.user?.id });
+        let response = await config.getAllUsers?.({ currentPage, totalRecords, search, moduleValue, userId: req?.user_data?.user_id });
         return res.status(200).json(response);
     } catch (error) {
         console.error("Error fetching users:", error);
@@ -70,11 +70,11 @@ const getAllUsers = async (req, res) => {
 const createGroup = async (req, res) => {
     try {
         const { name, groupUsers } = req.body;
-
+        console.log(req?.user_data);
         let response = await configurationProvider.getConfig().createGroup?.({
             name,
             groupUsers,
-            createdBy: req?.user?.id,
+            createdBy: req?.user_data?.user_id,
         });
 
         if (response?.status === "success") {

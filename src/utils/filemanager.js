@@ -182,6 +182,11 @@ const fileManager = {
     async convertType({ data, type = "utf8" } = {}) {
         if (Buffer.isBuffer(data)) return data;
         return Buffer.from(String(data), type);
+    },
+
+    async removeFile(filePath) {
+        const target = this._resolveAndValidate(filePath);
+        await fs.unlink(target);
     }
 };
 

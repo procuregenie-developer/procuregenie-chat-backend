@@ -1,5 +1,12 @@
 # Chatbot Backend Package
 
+
+----
+
+Node version :- 23.11.0
+
+---
+
 ## Introduction
 This package provides a robust backend solution for a real-time chat application. It includes REST APIs for message management, Socket.IO handlers for real-time communication, and a service layer for managing users and groups. Built with Node.js, Express, and Sequelize.
 
@@ -174,3 +181,16 @@ server.listen(3000, () => {
     console.log('Server running on port 3000');
 });
 ```
+
+Package use steps :-
+
+1) npm install
+
+Using npm link (For Active Development)
+---------------------------------------
+1) npm link
+2) npm link <packagename>
+
+Installation with Absolute Path
+
+1) npm install <packlocation>

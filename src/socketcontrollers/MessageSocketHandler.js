@@ -216,273 +216,270 @@ let userMessagesControllers = (socket, io) => {
     // ======================================================================
     // 📨 SEND MESSAGE - Enhanced with validation
     // ======================================================================
-socket.on("handleSendMessage", async (data) => {
-    let messageModel = getUserMessagesMaster();
-    try {
-        const { fromUserId, toUserId, groupId, messageType, messageText, files, tempId } = data;
-        
-        if (!["doc", "text"].includes(messageType)) {
-            socket.emit("message_error", {
-                tempId,
-                error: "Invalid message type!"
-            });
-            return;
-        };
+    socket.on("handleSendMessage", async (data) => {
+        let messageModel = getUserMessagesMaster();
+        try {
+            const { fromUserId, toUserId, groupId, messageType, messageText, files, tempId } = data;
 
-        // Validation
-        if (!fromUserId || (!toUserId && !groupId)) {
-            socket.emit("message_error", {
-                tempId,
-                error: "Either toUserId or groupId required."
-            });
-            return;
-        }
+            if (!["doc", "text"].includes(messageType)) {
+                socket.emit("message_error", {
+                    tempId,
+                    error: "Invalid message type!"
+                });
+                return;
+            };
 
-        // ⚠️ CRITICAL: Prevent sending both message and document simultaneously
-        if (messageText && messageText.trim() && files && files.length > 0) {
-            socket.emit("message_error", {
-                tempId,
-                error: "Cannot send text message and documents simultaneously. Please send one at a time."
-            });
-            return;
-        }
-
-        // Validate message type consistency
-        if (messageType === "text" && files && files.length > 0) {
-            socket.emit("message_error", {
-                tempId,
-                error: "Message type mismatch. Text messages cannot include files."
-            });
-            return;
-        }
-
-        if (messageType === "doc" && (!files || files.length === 0)) {
-            socket.emit("message_error", {
-                tempId,
-                error: "Document messages must include at least one file."
-            });
-            return;
-        }
-
-        // Validate files array structure
-        if (files && files.length > 0) {
-            for (const file of files) {
-                if (!file.base64 || !file.name) {
-                    socket.emit("message_error", {
-                        tempId,
-                        error: "Invalid file structure. Each file must have base64 and name properties."
-                    });
-                    return;
-                }
+            // Validation
+            if (!fromUserId || (!toUserId && !groupId)) {
+                socket.emit("message_error", {
+                    tempId,
+                    error: "Either toUserId or groupId required."
+                });
+                return;
             }
-        }
 
-        // Fetch sender info
-        const sender = await getUserInfo(fromUserId);
+            // ⚠️ CRITICAL: Prevent sending both message and document simultaneously
+            if (messageText && messageText.trim() && files && files.length > 0) {
+                socket.emit("message_error", {
+                    tempId,
+                    error: "Cannot send text message and documents simultaneously. Please send one at a time."
+                });
+                return;
+            }
 
-        // Create message in database
-        const message = await messageModel.create({
-            fromUserId,
-            toUserId: groupId ? null : toUserId,
-            groupId: groupId || null,
-            messageType,
-            messageText: messageType === "text" ? (messageText || null) : null,
-            isEdited: false
-        });
+            // Validate message type consistency
+            if (messageType === "text" && files && files.length > 0) {
+                socket.emit("message_error", {
+                    tempId,
+                    error: "Message type mismatch. Text messages cannot include files."
+                });
+                return;
+            }
 
-        // Handle multiple file uploads if present
-        if (files && files.length > 0) {
-            try {
-                const MAX_SIZE = 10 * 1024 * 1024; // 10 MB per file
-                const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50 MB total
-                const MAX_FILES = 10; // Maximum files per message
+            if (messageType === "doc" && (!files || files.length === 0)) {
+                socket.emit("message_error", {
+                    tempId,
+                    error: "Document messages must include at least one file."
+                });
+                return;
+            }
 
-                // Check file count limit
-                if (files.length > MAX_FILES) {
-                    socket.emit("message_error", {
-                        tempId,
-                        error: `Too many files. Maximum ${MAX_FILES} files allowed.`
-                    });
-                    await message.destroy({ where: { id: message.id } });
-                    return;
-                }
-
-                // Check total size
-                let totalSize = 0;
+            // Validate files array structure
+            if (files && files.length > 0) {
                 for (const file of files) {
-                    const fileBuffer = Buffer.from(file.base64, "base64");
-                    totalSize += fileBuffer.length;
-                }
-
-                if (totalSize > MAX_TOTAL_SIZE) {
-                    socket.emit("message_error", {
-                        tempId,
-                        error: `Total files size exceeds ${MAX_TOTAL_SIZE / (1024 * 1024)}MB limit.`
-                    });
-                    await message.destroy({ where: { id: message.id } });
-                    return;
-                }
-
-                // Create message directory
-                const messageDir = path.join(baseDir, `${message.id}`);
-                fileManager.addDirs({ uploadpath: baseDir, dirs: [`${message.id}`] });
-
-                const uploadedFiles = [];
-                let fileIndex = 0;
-
-                // Process each file
-                for (const file of files) {
-                    try {
-                        const fileBuffer = Buffer.from(file.base64, "base64");
-
-                        // Check individual file size
-                        if (fileBuffer.length > MAX_SIZE) {
-                            console.warn(`❌ File too large: ${file.name} (${fileBuffer.length} bytes)`);
-                            throw new Error(`File "${file.name}" exceeds 10MB size limit.`);
-                        }
-
-                        // Generate unique filename to avoid conflicts
-                        const fileExtension = path.extname(file.name);
-                        const fileName = path.basename(file.name, fileExtension);
-                        const uniqueFileName = `${fileName}_${Date.now()}_${fileIndex}${fileExtension}`;
-                        const filePath = path.join(messageDir, uniqueFileName);
-
-                        await fileManager.addFiles({ data: fileBuffer, location: filePath });
-
-                        // Store file info for response
-                        uploadedFiles.push({
-                            name: file.name,
-                            size: fileBuffer.length,
-                            type: file.type,
-                            path: filePath,
-                            uniqueName: uniqueFileName
-                        });
-
-                        console.log(`📎 File saved: ${file.name} as ${uniqueFileName}`);
-                        fileIndex++;
-
-                    } catch (fileError) {
-                        console.error(`❌ File save error for ${file.name}:`, fileError);
-
-                        // Cleanup: delete all already uploaded files
-                        for (const uploadedFile of uploadedFiles) {
-                            try {
-                                await fileManager.deleteFile(uploadedFile.path);
-                            } catch (deleteError) {
-                                console.error(`Failed to delete ${uploadedFile.path}:`, deleteError);
-                            }
-                        }
-
-                        // Delete the message record
-                        await message.destroy({ where: { id: message.id } });
-
+                    if (!file.base64 || !file.name) {
                         socket.emit("message_error", {
                             tempId,
-                            error: fileError.message || `Failed to upload file: ${file.name}`
+                            error: "Invalid file structure. Each file must have base64 and name properties."
                         });
                         return;
                     }
                 }
-
-                console.log(`✅ All ${files.length} files uploaded successfully for message ${message.id}`);
-
-            } catch (fileError) {
-                console.error("❌ File processing error:", fileError);
-
-                await message.destroy({ where: { id: message.id } });
-
-                socket.emit("message_error", {
-                    tempId,
-                    error: "Failed to process files. Please try again."
-                });
-                return;
             }
-        }
 
-        // Get uploaded files for response
-        let responseFiles = [];
-        if (files && files.length > 0) {
-            const messageDir = path.join("messagesdocs", String(message.id));
-            try {
-                const fileData = await fileManager.getAllFiles(messageDir, "base64");
-                responseFiles = fileData.map(file => ({
-                    name: file.name,
-                    size: file.size,
-                    type: file.type,
-                    base64: file.base64,
-                    // Include additional metadata if needed
-                    uploadedAt: new Date().toISOString()
-                }));
-            } catch (error) {
-                console.error("❌ Error getting uploaded files:", error);
-                // Continue without files in response rather than failing completely
+            // Fetch sender info
+            const sender = await getUserInfo(fromUserId);
+
+            // Create message in database
+            const message = await messageModel.create({
+                fromUserId,
+                toUserId: groupId ? null : toUserId,
+                groupId: groupId || null,
+                messageType,
+                messageText: messageType === "text" ? (messageText || null) : null,
+                isEdited: false
+            });
+
+            // Handle multiple file uploads if present
+            if (files && files.length > 0) {
+                try {
+                    const MAX_SIZE = 10 * 1024 * 1024; // 10 MB per file
+                    const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50 MB total
+                    const MAX_FILES = 10; // Maximum files per message
+
+                    // Check file count limit
+                    if (files.length > MAX_FILES) {
+                        socket.emit("message_error", {
+                            tempId,
+                            error: `Too many files. Maximum ${MAX_FILES} files allowed.`
+                        });
+                        await message.destroy({ where: { id: message.id } });
+                        return;
+                    }
+
+                    // Check total size
+                    let totalSize = 0;
+                    for (const file of files) {
+                        const fileBuffer = Buffer.from(file.base64, "base64");
+                        totalSize += fileBuffer.length;
+                    }
+
+                    if (totalSize > MAX_TOTAL_SIZE) {
+                        socket.emit("message_error", {
+                            tempId,
+                            error: `Total files size exceeds ${MAX_TOTAL_SIZE / (1024 * 1024)}MB limit.`
+                        });
+                        await message.destroy({ where: { id: message.id } });
+                        return;
+                    }
+
+                    // Create message directory
+                    const messageDir = path.join(baseDir, `${message.id}`);
+                    fileManager.addDirs({ uploadpath: baseDir, dirs: [`${message.id}`] });
+
+                    const uploadedFiles = [];
+                    let fileIndex = 0;
+
+                    // Process each file
+                    for (const file of files) {
+                        try {
+                            const fileBuffer = Buffer.from(file.base64, "base64");
+
+                            // Check individual file size
+                            if (fileBuffer.length > MAX_SIZE) {
+                                console.warn(`❌ File too large: ${file.name} (${fileBuffer.length} bytes)`);
+                                throw new Error(`File "${file.name}" exceeds 10MB size limit.`);
+                            }
+
+                            // Generate unique filename to avoid conflicts
+                            const fileExtension = path.extname(file.name);
+                            const fileName = path.basename(file.name, fileExtension);
+                            const uniqueFileName = `${fileName}_${Date.now()}_${fileIndex}${fileExtension}`;
+                            const filePath = path.join(messageDir, uniqueFileName);
+
+                            await fileManager.addFiles({ data: fileBuffer, location: filePath });
+
+                            // Store file info for response
+                            uploadedFiles.push({
+                                name: file.name,
+                                size: fileBuffer.length,
+                                type: file.type,
+                                path: filePath,
+                                uniqueName: uniqueFileName
+                            });
+
+                            console.log(`📎 File saved: ${file.name} as ${uniqueFileName}`);
+                            fileIndex++;
+
+                        } catch (fileError) {
+                            console.error(`❌ File save error for ${file.name}:`, fileError);
+
+                            // Cleanup: delete all already uploaded files
+                            for (const uploadedFile of uploadedFiles) {
+                                try {
+                                    await fileManager.removeFile(uploadedFile.path);
+                                } catch (deleteError) {
+                                    console.error(`Failed to delete ${uploadedFile.path}:`, deleteError);
+                                }
+                            }
+
+                            // Delete the message record
+                            await message.destroy({ where: { id: message.id } });
+
+                            socket.emit("message_error", {
+                                tempId,
+                                error: fileError.message || `Failed to upload file: ${file.name}`
+                            });
+                            return;
+                        }
+                    }
+
+                    console.log(`✅ All ${files.length} files uploaded successfully for message ${message.id}`);
+
+                } catch (fileError) {
+                    console.error("❌ File processing error:", fileError);
+
+                    await message.destroy({ where: { id: message.id } });
+
+                    socket.emit("message_error", {
+                        tempId,
+                        error: "Failed to process files. Please try again."
+                    });
+                    return;
+                }
             }
-        }
 
-        const completeMessage = {
-            ...message.toJSON(),
-            files: responseFiles,
-            senderName: sender ? sender.username : null,
-        };
+            // Get uploaded files for response
+            let responseFiles = [];
+            if (files && files.length > 0) {
+                const messageDir = path.join("messagesdocs", String(message.id));
+                try {
+                    const fileData = await fileManager.getAllFiles(messageDir, "base64");
+                    responseFiles = fileData.map(file => ({
+                        name: file.name,
+                        base64: file.content,
+                        // Include additional metadata if needed
+                        uploadedAt: new Date().toISOString()
+                    }));
+                } catch (error) {
+                    console.error("❌ Error getting uploaded files:", error);
+                    // Continue without files in response rather than failing completely
+                }
+            };
+            const completeMessage = {
+                ...message.toJSON(),
+                files: responseFiles,
+                senderName: sender ? sender.username : null,
+            };
 
-        // Confirm to sender
-        socket.emit("message_sent", {
-            tempId,
-            message: completeMessage,
-            status: "delivered",
-            timestamp: new Date(),
-            fileCount: files ? files.length : 0
-        });
-
-        // Deliver to recipients
-        if (groupId) {
-            // Group message - broadcast to all group members
-            io.emit(`group_message_${groupId}`, {
+            // Confirm to sender
+            socket.emit("message_sent", {
+                tempId,
                 message: completeMessage,
+                status: "delivered",
                 timestamp: new Date(),
                 fileCount: files ? files.length : 0
             });
-            console.log(`📤 Group message with ${files ? files.length : 0} files sent to group ${groupId}`);
-        } else {
-            // Private message - deliver to specific recipient
-            const recipient = onlineUsers.get(parseInt(toUserId));
-            if (recipient && recipient.status === "online") {
-                io.to(recipient.socketId).emit("new_message", {
+
+            // Deliver to recipients
+            if (groupId) {
+                // Group message - broadcast to all group members
+                io.emit(`group_message_${groupId}`, {
                     message: completeMessage,
-                    fromUser: onlineUsers.get(parseInt(fromUserId))?.userInfo,
                     timestamp: new Date(),
                     fileCount: files ? files.length : 0
                 });
-
-                // Send delivery confirmation
-                socket.emit("message_delivered", {
-                    messageId: message.id,
-                    deliveredAt: new Date(),
-                    recipientOnline: true,
-                    fileCount: files ? files.length : 0
-                });
-
-                console.log(`📤 Message with ${files ? files.length : 0} files delivered to ${toUserId} (online)`);
+                console.log(`📤 Group message with ${files ? files.length : 0} files sent to group ${groupId}`);
             } else {
-                // Recipient offline
-                socket.emit("message_delivered", {
-                    messageId: message.id,
-                    deliveredAt: new Date(),
-                    recipientOnline: false,
-                    fileCount: files ? files.length : 0
-                });
-                console.log(`📭 Recipient ${toUserId} is offline (message had ${files ? files.length : 0} files)`);
-            }
-        }
+                // Private message - deliver to specific recipient
+                const recipient = onlineUsers.get(parseInt(toUserId));
+                if (recipient && recipient.status === "online") {
+                    io.to(recipient.socketId).emit("new_message", {
+                        message: completeMessage,
+                        fromUser: onlineUsers.get(parseInt(fromUserId))?.userInfo,
+                        timestamp: new Date(),
+                        fileCount: files ? files.length : 0
+                    });
 
-    } catch (error) {
-        console.error("❌ Send Message Error:", error);
-        socket.emit("message_error", {
-            tempId: data.tempId,
-            error: "Failed to send message. Please try again."
-        });
-    }
-});
+                    // Send delivery confirmation
+                    socket.emit("message_delivered", {
+                        messageId: message.id,
+                        deliveredAt: new Date(),
+                        recipientOnline: true,
+                        fileCount: files ? files.length : 0
+                    });
+
+                    console.log(`📤 Message with ${files ? files.length : 0} files delivered to ${toUserId} (online)`);
+                } else {
+                    // Recipient offline
+                    socket.emit("message_delivered", {
+                        messageId: message.id,
+                        deliveredAt: new Date(),
+                        recipientOnline: false,
+                        fileCount: files ? files.length : 0
+                    });
+                    console.log(`📭 Recipient ${toUserId} is offline (message had ${files ? files.length : 0} files)`);
+                }
+            }
+
+        } catch (error) {
+            console.error("❌ Send Message Error:", error);
+            socket.emit("message_error", {
+                tempId: data.tempId,
+                error: "Failed to send message. Please try again."
+            });
+        }
+    });
 
     // ======================================================================
     // 🗑️ DELETE MESSAGE
@@ -516,7 +513,7 @@ socket.on("handleSendMessage", async (data) => {
             try {
                 const files = await fileManager.getAllFiles(messageDir);
                 if (files.length > 0) {
-                    await fileManager.deleteDir(messageDir);
+                    await fileManager.removeDir(messageDir);
                     console.log(`🗑️ Files deleted for message ${message.id}`);
                 }
             } catch (fileErr) {

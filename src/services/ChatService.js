@@ -210,7 +210,9 @@ class Service {
 
                         Object.keys(columns).forEach(key => {
                             (columns[key].columns || []).forEach(col => {
-                                likeConditions.push(`"${col}" ILIKE :search`);
+                                if (col != "id") {
+                                    likeConditions.push(`"${col}" ILIKE :search`);
+                                };
                             });
                         });
 
@@ -232,8 +234,9 @@ class Service {
                             where: {
                                 [Op.or]: [
                                     { fromUserId: userId },
-                                    { toUserId: userId }
-                                ]
+                                    { toUserId: userId },
+                                ],
+                                messageType: "text"
                             },
                             attributes: [
                                 [
@@ -324,12 +327,13 @@ class Service {
                                 order: [["createdAt", "DESC"]],
                                 raw: true
                             });
-
-                            mapped[i].lastMessage = lastMessage?.messageText || null;
-                            mapped[i].lastMessageAt = lastMessage?.createdAt || null;
+                            if (lastMessage) {
+                                mapped[i].lastMessage = lastMessage?.messageText || null;
+                                mapped[i].lastMessageAt = lastMessage?.createdAt || null;
+                                mapped[i].messageExits = true;
+                            };
                         }
                     }
-
                     return {
                         status: "success",
                         currentPage,
@@ -340,9 +344,11 @@ class Service {
                     };
 
                 } catch (error) {
+                    console.log(error);
                     return { status: "error", message: error };
                 }
             };
+
 
             /**
              * GET GROUPS
@@ -449,7 +455,6 @@ class Service {
                                 id: { [Op.ne]: groupId }
                             }
                         });
-                        console.log(duplicate, ">>>>>>>\n");
                         if (duplicate) {
                             return { status: "error", message: "Group name already exists" };
                         }
@@ -488,7 +493,6 @@ class Service {
                     return { status: "error", message: error };
                 }
             };
-
             /**
              * Register Everything
              */
