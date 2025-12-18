@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "jest"
+    
   },
   "publishConfig": {
     "access": "public"
@@ -30,8 +31,5 @@
   },
   "exports": {
     ".": "./index.js"
-  },
-  "files": [
-    "index.js"
-  ]
+  }
 }
