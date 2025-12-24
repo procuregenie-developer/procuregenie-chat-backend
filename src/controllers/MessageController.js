@@ -193,8 +193,11 @@ const getMessages = async (req, res) => {
         const results = [];
 
         for (const msg of messages) {
-            const messageDir = path.join("messagesdocs", String(msg.id));
-            const files = await fileManager.getAllFiles(messageDir, "base64");
+            let files = []
+            if (msg.messageType == "doc") {
+                const messageDir = path.join("messagesdocs", String(msg.id));
+                files = await fileManager.getAllFiles(messageDir, "base64");
+            }
 
             const sender = await getUserInfo(msg.fromUserId);
 

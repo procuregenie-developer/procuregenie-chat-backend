@@ -205,14 +205,15 @@ class Service {
                         limit
                     };
 
+                    /* ---------------- SEARCH FILTER ---------------- */
                     if (search) {
                         const likeConditions = [];
 
                         Object.keys(columns).forEach(key => {
                             (columns[key].columns || []).forEach(col => {
-                                if (col != "id") {
+                                if (col !== "id") {
                                     likeConditions.push(`"${col}" ILIKE :search`);
-                                };
+                                }
                             });
                         });
 
@@ -221,12 +222,15 @@ class Service {
                         }
                     }
 
+                    /* ---------------- EXCLUDE CURRENT USER ---------------- */
                     if (userId) {
                         whereParts.push(`"${columns.id.columns[0]}" != :currentUserId`);
                         replacements.currentUserId = Number(userId);
                     }
 
+                    /* ---------------- MODULE VALUE = 1 (CHAT USERS ONLY) ---------------- */
                     let chatUserIds = [];
+
                     if (Number(moduleValue) === 1) {
                         const messageModel = models.message;
 
@@ -234,40 +238,53 @@ class Service {
                             where: {
                                 [Op.or]: [
                                     { fromUserId: userId },
-                                    { toUserId: userId },
+                                    { toUserId: userId }
                                 ],
                                 messageType: "text"
                             },
                             attributes: [
                                 [
                                     Sequelize.literal(`
-                                        DISTINCT CASE
-                                            WHEN "fromUserId" = ${Number(userId)}
-                                            THEN "toUserId"
-                                            ELSE "fromUserId"
-                                        END
-                                    `),
+                            DISTINCT CASE
+                                WHEN "fromUserId" = ${Number(userId)}
+                                THEN "toUserId"
+                                ELSE "fromUserId"
+                            END
+                        `),
                                     "userId"
                                 ]
                             ],
                             raw: true
                         });
 
-                        chatUserIds = chatUsers.map(u => u.userId).filter(Boolean);
-                    }
+                        chatUserIds = chatUsers
+                            .map(u => u.userId)
+                            .filter(id => id && id !== Number(userId));
 
-                    if (chatUserIds.length > 0) {
+                        /* ❗ NO MESSAGES → RETURN EMPTY RESULT */
+                        if (chatUserIds.length === 0) {
+                            return {
+                                status: "success",
+                                currentPage,
+                                totalPages: 0,
+                                totalRecords: 0,
+                                limit: totalRecords,
+                                data: []
+                            };
+                        }
+
                         whereParts.push(`"${columns.id.columns[0]}" IN (:chatUserIds)`);
                         replacements.chatUserIds = chatUserIds;
                     }
 
                     const whereSQL = whereParts.join(" AND ");
 
+                    /* ---------------- COUNT QUERY ---------------- */
                     const countQuery = `
-                        SELECT COUNT(*) AS count
-                        FROM "${tableName}"
-                        WHERE ${whereSQL}
-                    `;
+            SELECT COUNT(*) AS count
+            FROM "${tableName}"
+            WHERE ${whereSQL}
+        `;
 
                     const [{ count }] = await sequelize.query(countQuery, {
                         type: QueryTypes.SELECT,
@@ -276,6 +293,7 @@ class Service {
 
                     const totalPages = Math.ceil(count / totalRecords);
 
+                    /* ---------------- SELECT COLUMNS ---------------- */
                     const dbColumns = [];
                     Object.values(columns).forEach(colObj => {
                         colObj.columns.forEach(col => {
@@ -285,19 +303,21 @@ class Service {
 
                     const selectCols = dbColumns.map(c => `"${c}"`).join(", ");
 
+                    /* ---------------- USERS QUERY ---------------- */
                     const usersQuery = `
-                        SELECT ${selectCols}
-                        FROM "${tableName}"
-                        WHERE ${whereSQL}
-                        ORDER BY "${columns.id.columns[0]}" DESC
-                        OFFSET :offset LIMIT :limit
-                    `;
+            SELECT ${selectCols}
+            FROM "${tableName}"
+            WHERE ${whereSQL}
+            ORDER BY "${columns.id.columns[0]}" DESC
+            OFFSET :offset LIMIT :limit
+        `;
 
                     const users = await sequelize.query(usersQuery, {
                         type: QueryTypes.SELECT,
                         replacements
                     });
 
+                    /* ---------------- MAP RESPONSE ---------------- */
                     const mapped = users.map(row => {
                         const obj = {};
 
@@ -312,7 +332,8 @@ class Service {
                         return obj;
                     });
 
-                    if (moduleValue == 1) {
+                    /* ---------------- LAST MESSAGE DATA ---------------- */
+                    if (Number(moduleValue) === 1) {
                         for (let i = 0; i < mapped.length; i++) {
                             const targetUserId = users[i][columns.id.columns[0]];
 
@@ -327,13 +348,17 @@ class Service {
                                 order: [["createdAt", "DESC"]],
                                 raw: true
                             });
+
                             if (lastMessage) {
-                                mapped[i].lastMessage = lastMessage?.messageText || null;
-                                mapped[i].lastMessageAt = lastMessage?.createdAt || null;
-                                mapped[i].messageExits = true;
-                            };
+                                mapped[i].lastMessage = lastMessage.messageText;
+                                mapped[i].lastMessageAt = lastMessage.createdAt;
+                                mapped[i].messageExists = true;
+                            } else {
+                                mapped[i].messageExists = false;
+                            }
                         }
                     }
+
                     return {
                         status: "success",
                         currentPage,
@@ -344,10 +369,11 @@ class Service {
                     };
 
                 } catch (error) {
-                    console.log(error);
-                    return { status: "error", message: error };
+                    console.error(error);
+                    return { status: "error", message: error.message };
                 }
             };
+
 
 
             /**

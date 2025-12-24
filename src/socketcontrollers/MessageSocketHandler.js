@@ -1,6 +1,6 @@
 const path = require("path");
 const { fileManager } = require("../utils/filemanager");
-const { getUserInfo, getUserMessagesMaster } = require("../utils/helper");
+const { getUserInfo, getUserMessagesMaster, getGroupMembers } = require("../utils/helper");
 
 const baseDir = path.join(fileManager.fileLocation, "messagesdocs");
 
@@ -10,11 +10,7 @@ const baseDir = path.join(fileManager.fileLocation, "messagesdocs");
 let onlineUsers = new Map(); // userId -> { socketId, userInfo, lastSeen, status }
 let typingUsers = new Map(); // `${fromUserId}-${toUserId}` -> timestamp
 let userSocketMap = new Map(); // socketId -> userId (reverse lookup)
-
-/**
- * 🔍 Helper: Fetch user data dynamically
- */
-
+let userRooms = new Map(); // userId -> Set of group room names
 
 /**
  * 🔄 Helper: Broadcast online users with detailed status
@@ -23,7 +19,8 @@ function broadcastOnlineUsers(io) {
     const onlineUsersList = Array.from(onlineUsers.entries()).map(([userId, data]) => ({
         userId,
         status: data.status,
-        lastSeen: data.lastSeen
+        lastSeen: data.lastSeen,
+        ...data.userInfo
     }));
 
     io.emit("online_users_list", onlineUsersList);
@@ -45,6 +42,23 @@ function broadcastUserStatus(io, userId, status, lastSeen = null) {
 }
 
 /**
+ * 📋 Helper: Notify users to update their chat lists
+ */
+function notifyChatListUpdate(io, userIds, groupId = null) {
+    userIds.forEach(userId => {
+        const user = onlineUsers.get(parseInt(userId));
+        if (user) {
+            io.to(user.socketId).emit("chat_list_update", {
+                type: groupId ? 'group' : 'user',
+                id: groupId || userId,
+                timestamp: new Date()
+            });
+            console.log(`📋 Notified user ${userId} to update chat list`);
+        }
+    });
+}
+
+/**
  * 🧹 Helper: Clean up user on disconnect
  */
 function cleanupUser(userId, socketId) {
@@ -53,6 +67,11 @@ function cleanupUser(userId, socketId) {
 
     // Remove socket mapping
     userSocketMap.delete(socketId);
+
+    // Remove from all rooms
+    if (userRooms.has(userId)) {
+        userRooms.delete(userId);
+    }
 
     // Clear all typing indicators for this user
     for (const [key] of typingUsers.entries()) {
@@ -70,10 +89,11 @@ let userMessagesControllers = (socket, io) => {
         console.error("❌ Socket or IO missing. Cannot initialize controllers.");
         return;
     };
+
     // ======================================================================
     // 👤 USER CONNECTED - Enhanced with comprehensive status management
     // ======================================================================
-    socket.on("handleUserConnection", (userData) => {
+    socket.on("handleUserConnection", async (userData) => {
         try {
             const { userId, userInfo } = userData;
 
@@ -108,6 +128,26 @@ let userMessagesControllers = (socket, io) => {
             // Store reverse mapping
             userSocketMap.set(socket.id, userId);
 
+            // Join user to their personal room for private messages
+            socket.join(`user_${userId}`);
+
+            // Fetch user's groups and join group rooms
+            try {
+                const groups = await getGroupMembers(userId);
+                groups.forEach(group => {
+                    socket.join(`group_${group.id}`);
+
+                    // Track user's rooms
+                    if (!userRooms.has(userId)) {
+                        userRooms.set(userId, new Set());
+                    }
+                    userRooms.get(userId).add(`group_${group.id}`);
+                });
+                console.log(`✅ User ${userId} joined ${groups.length} group rooms`);
+            } catch (groupError) {
+                console.warn(`⚠️ Could not fetch groups for user ${userId}:`, groupError.message);
+            }
+
             console.log(`✅ User ${userId} connected (socket: ${socket.id})`);
 
             // Broadcast updated online users list
@@ -115,6 +155,18 @@ let userMessagesControllers = (socket, io) => {
 
             // Broadcast individual status change
             broadcastUserStatus(io, userId, "online");
+
+            // Send initial online users list to the newly connected user
+            const onlineUsersList = Array.from(onlineUsers.entries())
+                .filter(([uid]) => uid !== userId)
+                .map(([uid, data]) => ({
+                    userId: uid,
+                    status: data.status,
+                    lastSeen: data.lastSeen,
+                    ...data.userInfo
+                }));
+
+            socket.emit("online_users_initial", onlineUsersList);
 
             // Confirm connection to the user
             socket.emit("connection_established", {
@@ -214,7 +266,7 @@ let userMessagesControllers = (socket, io) => {
     });
 
     // ======================================================================
-    // 📨 SEND MESSAGE - Enhanced with validation
+    // 📨 SEND MESSAGE - Enhanced with chat list updates
     // ======================================================================
     socket.on("handleSendMessage", async (data) => {
         let messageModel = getUserMessagesMaster();
@@ -408,14 +460,13 @@ let userMessagesControllers = (socket, io) => {
                     responseFiles = fileData.map(file => ({
                         name: file.name,
                         base64: file.content,
-                        // Include additional metadata if needed
                         uploadedAt: new Date().toISOString()
                     }));
                 } catch (error) {
                     console.error("❌ Error getting uploaded files:", error);
-                    // Continue without files in response rather than failing completely
                 }
             };
+
             const completeMessage = {
                 ...message.toJSON(),
                 files: responseFiles,
@@ -433,13 +484,24 @@ let userMessagesControllers = (socket, io) => {
 
             // Deliver to recipients
             if (groupId) {
-                // Group message - broadcast to all group members
-                io.emit(`group_message_${groupId}`, {
+                // Group message - broadcast to group room
+                io.to(`group_${groupId}`).emit("new_message", {
                     message: completeMessage,
                     timestamp: new Date(),
-                    fileCount: files ? files.length : 0
+                    fileCount: files ? files.length : 0,
+                    groupId: groupId
                 });
-                console.log(`📤 Group message with ${files ? files.length : 0} files sent to group ${groupId}`);
+
+                // Notify all group members to update their chat lists
+                try {
+                    const members = await getGroupMembers(groupId);
+                    const memberIds = members.map(m => m.userId);
+                    notifyChatListUpdate(io, memberIds, groupId);
+                } catch (error) {
+                    console.warn(`⚠️ Could not fetch group members for notification:`, error.message);
+                }
+
+                console.log(`📤 Group message sent to group ${groupId} (${files ? files.length : 0} files)`);
             } else {
                 // Private message - deliver to specific recipient
                 const recipient = onlineUsers.get(parseInt(toUserId));
@@ -459,19 +521,35 @@ let userMessagesControllers = (socket, io) => {
                         fileCount: files ? files.length : 0
                     });
 
-                    console.log(`📤 Message with ${files ? files.length : 0} files delivered to ${toUserId} (online)`);
+                    console.log(`📤 Message delivered to ${toUserId} (online)`);
                 } else {
-                    // Recipient offline
+                    // Recipient offline - still send to their room
+                    io.to(`user_${toUserId}`).emit("new_message", {
+                        message: completeMessage,
+                        fromUser: onlineUsers.get(parseInt(fromUserId))?.userInfo,
+                        timestamp: new Date(),
+                        fileCount: files ? files.length : 0
+                    });
+
                     socket.emit("message_delivered", {
                         messageId: message.id,
                         deliveredAt: new Date(),
                         recipientOnline: false,
                         fileCount: files ? files.length : 0
                     });
-                    console.log(`📭 Recipient ${toUserId} is offline (message had ${files ? files.length : 0} files)`);
+                    console.log(`📭 Recipient ${toUserId} is offline (message queued)`);
                 }
-            }
 
+                // Notify both users to update their chat lists
+                notifyChatListUpdate(io, [fromUserId, toUserId]);
+            };
+            io.emit('recent_chats_messages', {
+                fromUserId: fromUserId,
+                timestamp: new Date(),
+                toUserId: toUserId,
+                groupId: groupId
+            });
+            console.log("Finish execution");
         } catch (error) {
             console.error("❌ Send Message Error:", error);
             socket.emit("message_error", {
@@ -482,7 +560,25 @@ let userMessagesControllers = (socket, io) => {
     });
 
     // ======================================================================
-    // 🗑️ DELETE MESSAGE
+    // 📋 REQUEST ONLINE USERS
+    // ======================================================================
+    socket.on("get_online_users", () => {
+        try {
+            const onlineUsersList = Array.from(onlineUsers.entries()).map(([userId, data]) => ({
+                userId,
+                status: data.status,
+                lastSeen: data.lastSeen,
+                ...data.userInfo
+            }));
+
+            socket.emit("online_users_list", onlineUsersList);
+        } catch (error) {
+            console.error("❌ Get online users error:", error);
+        }
+    });
+
+    // ======================================================================
+    // 🗑️ DELETE MESSAGE - With chat list updates
     // ======================================================================
     socket.on("handleDeleteMessage", async (data) => {
         let messageModel = getUserMessagesMaster();
@@ -537,12 +633,23 @@ let userMessagesControllers = (socket, io) => {
 
             // Notify recipients
             if (groupId) {
-                io.emit(`group_message_deleted_${groupId}`, deletedMessage);
+                io.to(`group_${groupId}`).emit("message_deleted", deletedMessage);
+
+                // Notify group members to update chat lists
+                try {
+                    const members = await getGroupMembers(groupId);
+                    const memberIds = members.map(m => m.userId);
+                    notifyChatListUpdate(io, memberIds, groupId);
+                } catch (error) {
+                    console.warn(`⚠️ Could not fetch group members:`, error.message);
+                }
             } else if (toUserId) {
                 const recipient = onlineUsers.get(parseInt(toUserId));
                 if (recipient) {
                     io.to(recipient.socketId).emit("message_deleted", deletedMessage);
                 }
+                // Notify both users to update chat lists
+                notifyChatListUpdate(io, [fromUserId, toUserId]);
             }
 
             console.log(`🗑️ Message ${messageId} deleted successfully`);
@@ -553,7 +660,7 @@ let userMessagesControllers = (socket, io) => {
     });
 
     // ======================================================================
-    // ✏️ EDIT MESSAGE - Text messages only
+    // ✏️ EDIT MESSAGE - With chat list updates
     // ======================================================================
     socket.on("handleEditMessage", async (data) => {
         let messageModel = getUserMessagesMaster();
@@ -602,18 +709,91 @@ let userMessagesControllers = (socket, io) => {
 
             // Notify recipients
             if (groupId) {
-                io.emit(`group_message_edited_${groupId}`, updatedMessage);
+                io.to(`group_${groupId}`).emit("message_edited", updatedMessage);
+
+                // Notify group members to update chat lists
+                try {
+                    const members = await getGroupMembers(groupId);
+                    const memberIds = members.map(m => m.userId);
+                    notifyChatListUpdate(io, memberIds, groupId);
+                } catch (error) {
+                    console.warn(`⚠️ Could not fetch group members:`, error.message);
+                }
             } else {
                 const recipient = onlineUsers.get(parseInt(toUserId));
                 if (recipient) {
                     io.to(recipient.socketId).emit("message_edited", updatedMessage);
                 }
+                // Notify both users to update chat lists
+                notifyChatListUpdate(io, [fromUserId, toUserId]);
             }
 
             console.log(`✏️ Message ${messageId} edited successfully`);
         } catch (error) {
             console.error("Edit message error:", error);
             socket.emit("edit_message_error", { error: error.message });
+        }
+    });
+
+    // ======================================================================
+    // 👥 JOIN GROUP ROOM
+    // ======================================================================
+    socket.on("join_group", (data) => {
+        try {
+            const { userId, groupId } = data;
+
+            if (!userId || !groupId) {
+                console.warn("⚠️ Invalid join_group data:", data);
+                return;
+            }
+
+            const roomName = `group_${groupId}`;
+            socket.join(roomName);
+
+            // Track user's rooms
+            if (!userRooms.has(userId)) {
+                userRooms.set(userId, new Set());
+            }
+            userRooms.get(userId).add(roomName);
+
+            console.log(`👥 User ${userId} joined group room ${groupId}`);
+
+            // Notify group members
+            io.to(roomName).emit("group_member_joined", {
+                userId,
+                groupId,
+                timestamp: new Date()
+            });
+
+        } catch (error) {
+            console.error("Join group error:", error);
+        }
+    });
+
+    // ======================================================================
+    // 👋 LEAVE GROUP ROOM
+    // ======================================================================
+    socket.on("leave_group", (data) => {
+        try {
+            const { userId, groupId } = data;
+
+            if (!userId || !groupId) {
+                console.warn("⚠️ Invalid leave_group data:", data);
+                return;
+            }
+
+            const roomName = `group_${groupId}`;
+            socket.leave(roomName);
+
+            // Remove from user's rooms
+            if (userRooms.has(userId)) {
+                userRooms.get(userId).delete(roomName);
+            }
+
+            console.log(`👋 User ${userId} left group room ${groupId}`);
+
+        } catch (error) {
+            console.error("Leave group error:", error);
         }
     });
 
@@ -669,9 +849,6 @@ let userMessagesControllers = (socket, io) => {
     });
 };
 
-// ======================================================================
-// 🌐 REST API CONTROLLERS (unchanged but with validation)
-// ======================================================================
 module.exports = {
     userMessagesControllers
 };
