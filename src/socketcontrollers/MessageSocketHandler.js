@@ -615,9 +615,11 @@ let userMessagesControllers = (socket, io) => {
             } catch (fileErr) {
                 console.warn(`⚠️ Could not delete files for message ${message.id}:`, fileErr.message);
             }
-
+            // Mark message as deleted in DB
+            message.isDeleted = true;
+            await message.save();
             // Delete from database
-            await message.destroy({ where: { id: messageId } });
+            // await message.destroy({ where: { id: messageId } });
 
             const deletedMessage = {
                 messageId,

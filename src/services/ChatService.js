@@ -22,6 +22,8 @@ const configurationProvider = {
         /** Services */
         getAllUsers: null,
         getGroups: null,
+        getGroupManageUsers: null,
+        assignGroupMembers: null,
         createGroup: null,
         updateGroup: null,
         userModel: null
@@ -374,8 +376,6 @@ class Service {
                 }
             };
 
-
-
             /**
              * GET GROUPS
              */
@@ -428,6 +428,166 @@ class Service {
             };
 
             /**
+             * GET GROUP MANAGE USERS
+             * assigned: 0 = group assigned users, 1 = users not in group
+             */
+            const getGroupManageUsers = async ({ groupId, assigned = 0, search = "", page = 1, limit = 10 }) => {
+                try {
+                    const { sequelize, models } = configurationProvider.getConfig();
+
+                    const tableName = this.userModel.name;
+                    const columns = this.userModel.columns;
+
+                    // Validate group exists
+                    const group = await models.group.findOne({
+                        where: { id: Number(groupId) }
+                    });
+
+                    if (!group) {
+                        return { status: "error", message: "Group not found" };
+                    }
+
+                    // Get current group members
+                    const groupMembers = await models.GroupMember.findAll({
+                        where: { groupId: Number(groupId) },
+                        attributes: ["userId"],
+                        raw: true
+                    });
+
+                    const groupMemberIds = groupMembers.map(member => member.userId);
+
+                    // Build where conditions
+                    let whereParts = ["1 = 1"];
+                    let replacements = {
+                        groupId: Number(groupId),
+                        offset: (page - 1) * limit,
+                        limit
+                    };
+
+                    // Search filter
+                    if (search) {
+                        replacements.search = `%${search}%`;
+                        const likeConditions = [];
+
+                        Object.keys(columns).forEach(key => {
+                            (columns[key].columns || []).forEach(col => {
+                                if (col !== "id") {
+                                    likeConditions.push(`"${col}" ILIKE :search`);
+                                }
+                            });
+                        });
+
+                        if (likeConditions.length > 0) {
+                            whereParts.push(`(${likeConditions.join(" OR ")})`);
+                        }
+                    }
+
+                    // Filter by assigned status
+                    if (Number(assigned) === 0) {
+                        // Get assigned users (users who are in the group)
+                        if (groupMemberIds.length === 0) {
+                            return {
+                                status: "success",
+                                data: [],
+                                pagination: {
+                                    currentPage: Number(page),
+                                    totalPages: 0,
+                                    totalRecords: 0,
+                                    limit
+                                }
+                            };
+                        }
+                        whereParts.push(`"${columns.id.columns[0]}" IN (:groupMemberIds)`);
+                        replacements.groupMemberIds = groupMemberIds;
+                    } else {
+                        // Get unassigned users (users not in the group)
+                        if (groupMemberIds.length > 0) {
+                            whereParts.push(`"${columns.id.columns[0]}" NOT IN (:groupMemberIds)`);
+                            replacements.groupMemberIds = groupMemberIds;
+                        }
+                    }
+
+                    const whereSQL = whereParts.join(" AND ");
+
+                    // Count query
+                    const countQuery = `
+            SELECT COUNT(*) AS count
+            FROM "${tableName}"
+            WHERE ${whereSQL}
+        `;
+
+                    const [{ count }] = await sequelize.query(countQuery, {
+                        type: QueryTypes.SELECT,
+                        replacements
+                    });
+
+                    const totalPages = Math.ceil(count / limit);
+
+                    // Select columns
+                    const dbColumns = [];
+                    Object.values(columns).forEach(colObj => {
+                        colObj.columns.forEach(col => {
+                            if (!dbColumns.includes(col)) dbColumns.push(col);
+                        });
+                    });
+
+                    const selectCols = dbColumns.map(c => `"${c}"`).join(", ");
+
+                    // Users query
+                    const usersQuery = `
+            SELECT ${selectCols}
+            FROM "${tableName}"
+            WHERE ${whereSQL}
+            ORDER BY "${columns.id.columns[0]}" DESC
+            OFFSET :offset LIMIT :limit
+        `;
+
+                    const users = await sequelize.query(usersQuery, {
+                        type: QueryTypes.SELECT,
+                        replacements
+                    });
+
+                    // Map response
+                    const mapped = users.map(row => {
+                        const obj = {};
+
+                        Object.keys(columns).forEach(key => {
+                            const vals = (columns[key].columns || [])
+                                .map(c => row[c])
+                                .filter(Boolean);
+
+                            obj[key] = vals.join(" ") || null;
+                        });
+
+                        // Add assignment status
+                        obj.isAssigned = Number(assigned) === 0;
+
+                        return obj;
+                    });
+
+                    return {
+                        status: "success",
+                        data: mapped,
+                        pagination: {
+                            currentPage: Number(page),
+                            totalPages,
+                            totalRecords: count,
+                            limit
+                        },
+                        groupInfo: {
+                            id: group.id,
+                            name: group.name,
+                            totalMembers: groupMemberIds.length
+                        }
+                    };
+
+                } catch (error) {
+                    console.error("Error in getGroupManageUsers:", error);
+                    return { status: "error", message: error.message };
+                }
+            };
+
+            /**
              * CREATE GROUP
              */
             const createGroup = async ({ name, groupUsers = [], createdBy }) => {
@@ -454,7 +614,14 @@ class Service {
                         });
                     }
 
-                    return { status: "success", message: "Group created" };
+                    return {
+                        status: "success",
+                        message: "Group created",
+                        group: {
+                            id: group.id,
+                            name: group.name
+                        }
+                    };
 
                 } catch (error) {
                     return { status: "error", message: error };
@@ -519,6 +686,80 @@ class Service {
                     return { status: "error", message: error };
                 }
             };
+            const assignGroupMembers = async ({ groupId, unlinkAssigned, notAssigned, groupName }) => {
+                const transaction = await configurationProvider.getConfig()?.sequelize?.transaction();
+
+                try {
+                    const { models } = configurationProvider.getConfig();
+                    if (groupName) {
+                        await models.group.update({
+                            name: groupName
+                        }, {
+                            where: { id: groupId },
+                            transaction
+                        });
+                    };
+                    /* ------------------ CHECK GROUP EXISTS ------------------ */
+                    const groupExists = await models.group.count({
+                        where: { id: groupId },
+                        transaction
+                    });
+
+                    if (!groupExists) {
+                        await transaction.rollback();
+                        return { status: "error", message: "Group does not exist!" };
+                    }
+
+                    /* ------------------ UNLINK ASSIGNED USERS ------------------ */
+                    if (Array.isArray(unlinkAssigned) && unlinkAssigned.length > 0) {
+                        await models.GroupMember.destroy({
+                            where: {
+                                groupId,
+                                userId: { [Op.in]: unlinkAssigned }
+                            },
+                            transaction
+                        });
+                    };
+                    /* ------------------ ASSIGN NEW USERS ------------------ */
+                    if (Array.isArray(notAssigned) && notAssigned.length > 0) {
+
+                        // Find already existing assignments to avoid duplicates
+                        const existingAssignments = await models.GroupMember.findAll({
+                            where: {
+                                groupId,
+                                userId: { [Op.in]: notAssigned }
+                            },
+                            attributes: ["userId"],
+                            transaction
+                        });
+                        const existingUserIds = existingAssignments.map(item => item.userId);
+
+                        const newAssignments = notAssigned
+                            .filter(userId => !existingUserIds.includes(userId))
+                            .map(userId => ({
+                                groupId,
+                                userId
+                            }));
+                        if (newAssignments.length > 0) {
+                            await models.GroupMember.bulkCreate(newAssignments, { transaction });
+                        };
+                    };
+                    await transaction.commit();
+
+                    return {
+                        status: "success",
+                        message: "Group details updated successfully!"
+                    };
+
+                } catch (error) {
+                    await transaction.rollback();
+                    return {
+                        status: "error",
+                        message: error
+                    };
+                }
+            };
+
             /**
              * Register Everything
              */
@@ -530,6 +771,8 @@ class Service {
                 /** Services */
                 getAllUsers,
                 getGroups,
+                getGroupManageUsers,
+                assignGroupMembers,
                 createGroup,
                 updateGroup,
                 userModel: this.userModel

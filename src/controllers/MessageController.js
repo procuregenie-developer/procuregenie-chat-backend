@@ -192,21 +192,24 @@ const getMessages = async (req, res) => {
 
         const results = [];
 
-        for (const msg of messages) {
+        for (let msg of messages) {
             let files = []
-            if (msg.messageType == "doc") {
+            if (msg.messageType == "doc" && !msg.isDeleted) {
                 const messageDir = path.join("messagesdocs", String(msg.id));
                 files = await fileManager.getAllFiles(messageDir, "base64");
-            }
-
+            };
+            msg = msg.toJSON();
+            if (msg.isDeleted) {
+                msg.messageText = "Your message deleted.";
+            };
             const sender = await getUserInfo(msg.fromUserId);
 
             results.push({
-                ...msg.toJSON(),
+                ...msg,
                 files,
                 senderName: sender ? sender.username : null,
             });
-        }
+        };
 
         return res.status(200).json({
             status: "success",
@@ -228,8 +231,61 @@ const getMessages = async (req, res) => {
     }
 };
 
+const getGroupManageUsers = async (req, res) => {
+    try {
+        let { groupId } = req.params;
+        let { assigned, search = "", page = 1, limit = 10 } = req.query; // Value 0 for assigned user and 1 for unassignes
+
+        let response = await configurationProvider.getConfig().getGroupManageUsers?.({
+            groupId,
+            assigned,
+            search,
+            page,
+            limit
+        });
+
+        if (response.status === "success") {
+            return res.status(200).json(response);
+        }
+
+        return res.status(400).json(response);
+
+    } catch (error) {
+        console.error("Get Groups Error:", error);
+
+        return res.status(500).json({
+            status: "error",
+            message: error,
+        });
+    }
+};
 
 
+const assignGroupMembers = async (req, res) => {
+    try {
+        let { groupId } = req.params;
+        let { notAssigned, unlinkAssigned, groupName } = req.body;
+        let response = await configurationProvider.getConfig().assignGroupMembers?.({
+            groupId,
+            notAssigned,
+            unlinkAssigned,
+            groupName
+        });
+
+        if (response.status === "success") {
+            return res.status(200).json(response);
+        }
+
+        return res.status(400).json(response);
+    } catch (error) {
+        console.error("Get Groups Error:", error);
+
+        return res.status(500).json({
+            status: "error",
+            message: error,
+        });
+    }
+}
 // ============================================================================
 // 📌 EXPORT ALL CONTROLLERS IN ONE OBJECT
 // ============================================================================
@@ -238,5 +294,7 @@ module.exports = {
     createGroup: createGroup,
     updateGroup: updateGroup,
     fetchMessages: getMessages,
-    fetchUsers: getAllUsers
+    fetchUsers: getAllUsers,
+    getGroupManageUsers,
+    assignGroupMembers
 };

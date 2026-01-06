@@ -1,4 +1,4 @@
-const { body, query, validationResult } = require("express-validator");
+const { body, query, validationResult, param } = require("express-validator");
 
 const validatorHandler = (req, res, next) => {
     const errors = validationResult(req);
@@ -144,11 +144,77 @@ const validatorGetUsers = [
         .withMessage("userId must be a valid positive integer"),
     validatorHandler
 ];
+const validateGetGroupManageUsers = [
+    // Validate groupId parameter
+    param('groupId')
+        .exists().withMessage('Group ID is required')
+        .isInt({ min: 1 }).withMessage('Group ID must be a positive integer')
+        .toInt(),
 
+    // Validate assigned query parameter
+    query('assigned')
+        .exists().withMessage('Assigned parameter is required')
+        .isIn(['0', '1']).withMessage('Assigned must be either 0 (assigned users) or 1 (unassigned users)')
+        .toInt(),
+
+    // Validate search query parameter
+    query('search')
+        .optional()
+        .trim()
+        .isString().withMessage('Search must be a string')
+        .isLength({ max: 100 }).withMessage('Search cannot exceed 100 characters')
+        .escape(), // Sanitize to prevent XSS
+
+    // Validate page query parameter
+    query('page')
+        .optional()
+        .isInt({ min: 1 }).withMessage('Page must be a positive integer')
+        .default(1)
+        .toInt(),
+
+    // Validate limit query parameter
+    query('limit')
+        .optional()
+        .isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100')
+        .default(10)
+        .toInt(),
+    validatorHandler
+];
+const assignGroupMembersValidator = [
+    param("groupId")
+        .exists().withMessage("groupId is required")
+        .isInt({ gt: 0 }).withMessage("groupId must be a positive integer"),
+
+    body("unlinkAssigned")
+        .optional()
+        .isArray().withMessage("unlinkAssigned must be an array")
+        .custom((arr) => {
+            if (!arr.every(Number.isInteger)) {
+                throw new Error("unlinkAssigned must contain only integers");
+            }
+            return true;
+        }),
+
+    body("notAssigned")
+        .optional()
+        .isArray().withMessage("notAssigned must be an array")
+        .custom((arr) => {
+            if (!arr.every(Number.isInteger)) {
+                throw new Error("notAssigned must contain only integers");
+            }
+            return true;
+        }),
+    body("groupName")
+        .optional()
+        .isString().withMessage("Group name must be a string"),
+    validatorHandler
+];
 module.exports = {
     validatorUpdateGroup,
     validatorCreateGroup,
     validatorGetGroups,
     validatorGetUsers,
-    validateGetMessages
+    validateGetMessages,
+    validateGetGroupManageUsers,
+    assignGroupMembersValidator
 };
