@@ -241,7 +241,8 @@ const getGroupManageUsers = async (req, res) => {
             assigned,
             search,
             page,
-            limit
+            limit,
+            userId: req?.user_data?.user_id
         });
 
         if (response.status === "success") {

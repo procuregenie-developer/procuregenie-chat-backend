@@ -381,7 +381,7 @@ class Service {
              */
             const getGroups = async ({ search = "", page = 1, limit = 10, userId = null }) => {
                 try {
-                    const { models } = configurationProvider.getConfig();
+                    const { models, sequelize, userModel } = configurationProvider.getConfig();
 
                     const group = models.group;
                     const GroupMember = models.GroupMember;
@@ -411,9 +411,71 @@ class Service {
                         limit
                     });
 
+                    // Get createdBy user IDs
+                    const createdByUserIds = [...new Set(rows.map(row => row.createdBy).filter(id => id))];
+
+                    // Fetch createdBy user details
+                    let createdByUserMap = {};
+                    if (createdByUserIds.length > 0) {
+                        const tableName = userModel.name;
+                        const columns = userModel.columns;
+
+                        // Build column list
+                        const dbColumns = [];
+                        Object.values(columns).forEach(colObj => {
+                            colObj.columns.forEach(col => {
+                                if (!dbColumns.includes(col)) dbColumns.push(col);
+                            });
+                        });
+
+                        const selectCols = dbColumns.map(c => `"${c}"`).join(", ");
+                        const idColumn = columns.id.columns[0];
+
+                        const usersQuery = `
+                SELECT ${selectCols}
+                FROM "${tableName}"
+                WHERE "${idColumn}" IN (:createdByUserIds)
+            `;
+
+                        const users = await sequelize.query(usersQuery, {
+                            type: QueryTypes.SELECT,
+                            replacements: { createdByUserIds }
+                        });
+
+                        // Create map of userId -> user details
+                        createdByUserMap = users.reduce((map, row) => {
+                            const obj = {};
+                            Object.keys(columns).forEach(key => {
+                                const vals = (columns[key].columns || [])
+                                    .map(c => row[c])
+                                    .filter(Boolean);
+                                obj[key] = vals.join(" ") || null;
+                            });
+
+                            // Get user ID
+                            const userId = row[columns.id.columns[0]];
+                            map[userId] = obj;
+                            return map;
+                        }, {});
+                    }
+
+                    // Construct final response with createdBy user details
+                    const groupsWithCreator = rows.map(groupItem => {
+                        const groupData = groupItem.toJSON();
+                        const createdByUser = createdByUserMap[groupData.createdBy] || null;
+
+                        return {
+                            ...groupData,
+                            createdByUser: createdByUser ? {
+                                id: createdByUser.id,
+                                name: createdByUser.username || createdByUser.name || "Unknown User"
+                            } : null
+                        };
+                    });
+
                     return {
                         status: "success",
-                        data: rows,
+                        data: groupsWithCreator,
                         pagination: {
                             currentPage: Number(page),
                             totalPages: Math.ceil(count / limit),
@@ -423,7 +485,8 @@ class Service {
                     };
 
                 } catch (error) {
-                    return { status: "error", message: error };
+                    console.error("Error in getGroups:", error);
+                    return { status: "error", message: error.message };
                 }
             };
 
@@ -431,7 +494,7 @@ class Service {
              * GET GROUP MANAGE USERS
              * assigned: 0 = group assigned users, 1 = users not in group
              */
-            const getGroupManageUsers = async ({ groupId, assigned = 0, search = "", page = 1, limit = 10 }) => {
+            const getGroupManageUsers = async ({ groupId, assigned = 0, search = "", page = 1, limit = 10, userId = 0 }) => {
                 try {
                     const { sequelize, models } = configurationProvider.getConfig();
 
@@ -446,15 +509,18 @@ class Service {
                     if (!group) {
                         return { status: "error", message: "Group not found" };
                     }
-
                     // Get current group members
                     const groupMembers = await models.GroupMember.findAll({
-                        where: { groupId: Number(groupId) },
+                        where: {
+                            groupId: Number(groupId), userId: {
+                                [Op.not]: userId
+                            }
+                        },
                         attributes: ["userId"],
                         raw: true
                     });
 
-                    const groupMemberIds = groupMembers.map(member => member.userId);
+                    let groupMemberIds = groupMembers.map(member => member.userId);
 
                     // Build where conditions
                     let whereParts = ["1 = 1"];
@@ -505,8 +571,8 @@ class Service {
                             whereParts.push(`"${columns.id.columns[0]}" NOT IN (:groupMemberIds)`);
                             replacements.groupMemberIds = groupMemberIds;
                         }
-                    }
-
+                    };
+                    whereParts.push(`"${columns.id.columns[0]}" != ${userId}`)
                     const whereSQL = whereParts.join(" AND ");
 
                     // Count query

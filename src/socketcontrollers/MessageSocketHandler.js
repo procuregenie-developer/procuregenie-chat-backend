@@ -546,7 +546,7 @@ let userMessagesControllers = (socket, io) => {
             io.emit('recent_chats_messages', {
                 fromUserId: fromUserId,
                 timestamp: new Date(),
-                toUserId: toUserId,
+                toUserId: Number(toUserId),
                 groupId: groupId
             });
             console.log("Finish execution");

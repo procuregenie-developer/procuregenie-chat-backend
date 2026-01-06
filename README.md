@@ -1,75 +1,123 @@
-# Chatbot Backend Package
+Here is a **clean, professional, and production-ready updated `README.md`** for your **Chatbot Backend Package**, rewritten for **clarity, correctness, and npm-quality documentation**.
 
-
-----
-
-Node version :- 23.11.0
+You can **copy–paste this directly** into your repository.
 
 ---
 
-## Introduction
-This package provides a robust backend solution for a real-time chat application. It includes REST APIs for message management, Socket.IO handlers for real-time communication, and a service layer for managing users and groups. Built with Node.js, Express, and Sequelize.
+# 🚀 Chatbot Backend Package
 
-## Features
-- **Real-time Messaging**: Instant text and file messaging using Socket.IO.
-- **Group Chat**: Create, update, and manage group conversations.
-- **File Sharing**: Upload and share files/documents in chats.
-- **Message Management**: Edit and delete messages with real-time updates for all participants.
-- **User Status**: Track online/offline status of users.
-- **Clean Architecture**: Separation of concerns with Services, Controllers, and Models.
+A **scalable, real-time chatbot backend** built with **Node.js, Express, Sequelize, and Socket.IO**.
+Designed to plug into **any existing user table** without modifying your schema.
 
-## Folder Structure
+---
+
+## 📌 Node Version
+
+```txt
+Node.js >= 23.11.0
+```
+
+---
+
+## 📖 Introduction
+
+`chatbortbackend` is a **ready-to-use backend engine** for real-time chat applications.
+It provides:
+
+* REST APIs for messages & groups
+* Socket.IO real-time events
+* Dynamic user-table integration
+* Transaction-safe group management
+* Clean service-based architecture
+
+You **do not need to redesign your user table** — simply map it during initialization.
+
+---
+
+## ✨ Features
+
+* 🔴 **Real-time Messaging** (Socket.IO)
+* 👥 **One-to-One & Group Chat**
+* 📎 **File & Document Sharing**
+* ✏️ **Edit / Delete Messages (Live Sync)**
+* 🟢 **Online / Offline User Tracking**
+* 🔒 **Transaction-Safe Group Operations**
+* 🧩 **Plug-and-Play User Table Mapping**
+* 🧱 **Clean Architecture (Controller / Service / Model)**
+
+---
+
+## 🗂 Folder Structure
+
 ```
 src/
 ├── config/
-│   └── DatabaseConfig.js       # Database connection and configuration
+│   └── DatabaseConfig.js        # Sequelize DB connection
+│
 ├── controllers/
-│   └── MessageController.js    # REST API controllers for messages
+│   └── MessageController.js     # REST API controllers
+│
 ├── models/
-│   ├── Group.js                # Group model
-│   ├── GroupMember.js          # Group Member model
-│   ├── Message.js              # Message model
-│   └── init_models.js          # Model initialization and associations
+│   ├── Group.js                 # Group model
+│   ├── GroupMember.js           # Group-user mapping
+│   ├── Message.js               # Message model
+│   └── init_models.js           # Model associations
+│
 ├── services/
-│   └── ChatService.js          # Core business logic service
+│   └── ChatService.js           # Core business logic
+│
 ├── sockets/
-│   └── MessageSocketHandler.js # Socket.IO event handlers
+│   └── MessageSocketHandler.js  # Socket.IO events
+│
 ├── utils/
-│   ├── AppUtils.js             # General utilities
-│   └── FileManager.js          # File system management
-└── validators/
-    └── ChatValidators.js       # Request validators
-index.js                        # Main entry point
+│   ├── AppUtils.js              # Utility helpers
+│   └── FileManager.js           # File handling
+│
+├── validators/
+│   └── ChatValidators.js        # Express validators
+│
+└── index.js                     # Package entry point
 ```
 
-## Installation
+---
+
+## 📦 Installation
+
+### Install from npm
+
 ```bash
 npm install chatbortbackend
 ```
 
-## Configuration
+---
 
-### Database Configuration
-The package requires a PostgreSQL database. Configure it using `DatabaseConfig`.
+## ⚙️ Configuration & Initialization
 
-### Initialization
-Initialize the package in your main application file:
+### 🔧 Database Support
 
-```javascript
+* PostgreSQL (Sequelize ORM)
+
+---
+
+### 🧠 Initialization Example
+
+```js
 const { Service } = require('chatbortbackend').ChatService;
 
-let chatService=new Service();
-(async()=>{
+const chatService = new Service();
+
+(async () => {
     await chatService.init({
         dbconfig: {
             host: 'localhost',
             username: 'postgres',
             password: 'password',
             database: 'chat_db',
+            port: 5432,
             dialect: 'postgres'
         },
         userModel: {
-            name: 'users', // Your existing user table name
+            name: 'users', // existing user table
             columns: {
                 id: { columns: ['id'] },
                 username: { columns: ['first_name', 'last_name'] },
@@ -79,84 +127,148 @@ let chatService=new Service();
         }
     });
 })();
-
-module.exports = { chatService };
 ```
 
-## API Documentation
+✔ No schema changes required
+✔ Works with existing production databases
 
-### Messages
+---
 
-#### Create Message
-- **URL**: `/api/messages`
-- **Method**: `POST`
-- **Body**:
-  ```json
-  {
-    "fromUserId": 1,
-    "toUserId": 2, // OR "groupId": 1
-    "messageType": "text", // or "doc"
-    "messageText": "Hello world",
-    "file": { "name": "image.png", "base64": "..." } // Optional
+## 🔌 API Documentation
+
+### 📩 Messages
+
+#### ➤ Create Message
+
+```
+POST /api/messages
+```
+
+**Request Body**
+
+```json
+{
+  "fromUserId": 1,
+  "toUserId": 2,
+  "groupId": null,
+  "messageType": "text",
+  "messageText": "Hello world",
+  "file": {
+    "name": "image.png",
+    "base64": "..."
   }
-  ```
+}
+```
 
-#### Fetch Messages
-- **URL**: `/api/messages`
-- **Method**: `GET`
-- **Query Params**:
-  - `fromUserId`: Sender ID (required if no groupId)
-  - `toUserId`: Receiver ID (required if no groupId)
-  - `groupId`: Group ID (required if no user IDs)
-  - `search`: Search text (optional)
-  - `page`: Page number (default 1)
-  - `limit`: Records per page (default 10)
+---
 
-## Socket Documentation
+#### ➤ Fetch Messages
 
-### Events
+```
+GET /api/messages
+```
 
-| Event Name | Direction | Description | Payload |
-|------------|-----------|-------------|---------|
-| `handleUserConnection` | Client -> Server | Register user | `{ userId, userInfo }` |
-| `handleSendMessage` | Client -> Server | Send message | `{ fromUserId, toUserId, groupId, messageType, messageText, file }` |
-| `handleDeleteMessage` | Client -> Server | Delete message | `{ messageId, fromUserId }` |
-| `handleEditMessage` | Client -> Server | Edit message | `{ messageId, messageText, fromUserId }` |
-| `new_message` | Server -> Client | New message received | `{ message, fromUser }` |
-| `message_deleted` | Server -> Client | Message deleted | `{ messageId, deleted: true }` |
-| `message_edited` | Server -> Client | Message edited | `{ messageId, messageText, edited: true }` |
-| `online_users` | Server -> Client | List of online users | `[userId1, userId2, ...]` |
+**Query Parameters**
 
-## Database Schema
+| Parameter  | Required | Description      |
+| ---------- | -------- | ---------------- |
+| fromUserId | Optional | Sender user ID   |
+| toUserId   | Optional | Receiver user ID |
+| groupId    | Optional | Group ID         |
+| search     | Optional | Search text      |
+| page       | Optional | Default: 1       |
+| limit      | Optional | Default: 10      |
+
+---
+
+## 🔄 Socket.IO Events
+
+### Client → Server
+
+| Event                  | Description    |
+| ---------------------- | -------------- |
+| `handleUserConnection` | Register user  |
+| `handleSendMessage`    | Send message   |
+| `handleEditMessage`    | Edit message   |
+| `handleDeleteMessage`  | Delete message |
+
+---
+
+### Server → Client
+
+| Event             | Description          |
+| ----------------- | -------------------- |
+| `new_message`     | New incoming message |
+| `message_edited`  | Message updated      |
+| `message_deleted` | Message removed      |
+| `online_users`    | Active users list    |
+
+---
+
+### Sample Payload
+
+```json
+{
+  "fromUserId": 1,
+  "toUserId": 2,
+  "groupId": null,
+  "messageType": "text",
+  "messageText": "Hello"
+}
+```
+
+---
+
+## 🗃 Database Schema
 
 ### Tables
-- **groupsmaster (`Group`)**: Stores group details.
-- **GroupMember (`GroupMember`)**: Links users to groups.
-- **message (`Message`)**: Stores all chat messages.
+
+| Table             | Purpose            |
+| ----------------- | ------------------ |
+| `groupsmaster`    | Group metadata     |
+| `groupuserslines` | Group-user mapping |
+| `message`         | Messages           |
+
+---
 
 ### Relationships
-- `Group` has many `GroupMember`
-- `Group` has many `Message`
-- `GroupMember` belongs to `Group`
-- `Message` belongs to `Group`
 
-## Service Layer (`ChatService`)
+* `Group` ➝ hasMany ➝ `GroupMember`
+* `Group` ➝ hasMany ➝ `Message`
+* `GroupMember` ➝ belongsTo ➝ `Group`
+* `Message` ➝ belongsTo ➝ `Group`
 
-- `fetchMessages: Retrieve messages with pagination.
-- `fetchGroups`: Retrieve groups for a user.
-- `createGroup`: Create a new group.
-- `updateGroup`: Update group details and members.
+---
 
-## Example Usage (Express.js)
+## 🧠 Service Layer (`ChatService`)
 
-```javascript
+Available Methods:
+
+* `fetchMessages()`
+* `fetchGroups()`
+* `createGroup()`
+* `updateGroup()`
+* `assignGroupMembers()`
+* `getGroupManageUsers()`
+
+✔ All group operations are **transaction-safe**
+
+---
+
+## 🚀 Express.js Example
+
+```js
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const { MessageController, MessageSocketHandler,ChatValidators } = require('chatbortbackend');
-const { Service } = require('chatbortbackend').ChatService;
 
-let chatService=new Service();
+const {
+    MessageController,
+    MessageSocketHandler,
+    ChatValidators
+} = require('chatbortbackend');
+
+const { Service } = require('chatbortbackend').ChatService;
 
 const app = express();
 const server = http.createServer(app);
@@ -164,13 +276,18 @@ const io = new Server(server);
 
 app.use(express.json());
 
-// Initialize
-(async ()=>{
-   await chatService.init({ ...config });
+// Initialize Chat Service
+const chatService = new Service();
+(async () => {
+    await chatService.init({ ...config });
 })();
 
 // Routes
-app.get('/messages',ChatValidators.validateGetMessages, MessageController.fetchMessages);
+app.get(
+    '/messages',
+    ChatValidators.validateGetMessages,
+    MessageController.fetchMessages
+);
 
 // Socket
 io.on('connection', (socket) => {
@@ -178,19 +295,25 @@ io.on('connection', (socket) => {
 });
 
 server.listen(3000, () => {
-    console.log('Server running on port 3000');
+    console.log('🚀 Server running on port 3000');
 });
 ```
 
-Package use steps :-
+---
 
-1) npm install
+## 🛠 Development Usage
 
-Using npm link (For Active Development)
----------------------------------------
-1) npm link
-2) npm link <packagename>
+### Using `npm link` (Local Development)
 
-Installation with Absolute Path
+```bash
+npm link
+npm link chatbortbackend
+```
 
-1) npm install <packlocation>
+---
+
+### Install from Local Path
+
+```bash
+npm install /absolute/path/to/chatbortbackend
+```
