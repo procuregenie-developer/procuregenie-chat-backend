@@ -40,7 +40,12 @@ async function getUserInfo(userId) {
     }
 };
 
+async function getGroupMembers(){
+    return [];
+}
+
 module.exports = {
     getUserInfo,
-    getUserMessagesMaster
+    getUserMessagesMaster,
+    getGroupMembers
 };

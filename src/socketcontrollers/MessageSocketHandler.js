@@ -341,7 +341,6 @@ let userMessagesControllers = (socket, io) => {
                 messageText: messageType === "text" ? (messageText || null) : null,
                 isEdited: false
             });
-
             // Handle multiple file uploads if present
             if (files && files.length > 0) {
                 try {
@@ -385,6 +384,7 @@ let userMessagesControllers = (socket, io) => {
                     // Process each file
                     for (const file of files) {
                         try {
+                            console.log(`📎 Processing file: ${file}`);
                             const fileBuffer = Buffer.from(file.base64, "base64");
 
                             // Check individual file size
