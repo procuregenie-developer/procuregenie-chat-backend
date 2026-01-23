@@ -350,15 +350,21 @@ class Service {
                                 order: [["createdAt", "DESC"]],
                                 raw: true
                             });
-
                             if (lastMessage) {
+                                mapped[i].messageId = lastMessage ? lastMessage.id : null;
                                 mapped[i].lastMessage = lastMessage.messageText;
                                 mapped[i].lastMessageAt = lastMessage.createdAt;
                                 mapped[i].messageExists = true;
                             } else {
                                 mapped[i].messageExists = false;
-                            }
-                        }
+                            };
+                        };
+                        //Sorted message by last message time
+                        mapped.sort((a, b) => {
+                            const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+                            const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+                            return timeB - timeA;
+                        });
                     }
 
                     return {
